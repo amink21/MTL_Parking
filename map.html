@@ -1,0 +1,838 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>MTL Parking Tickets</title>
+  <script src="https://cdn.apple-mapkit.com/mk/5.x.x/mapkit.js" crossorigin></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg:            #f2f2f7;
+      --surface:       rgba(255,255,255,0.88);
+      --surface-solid: #ffffff;
+      --border:        rgba(0,0,0,0.07);
+      --border-strong: rgba(0,0,0,0.11);
+      --text:          #1c1c1e;
+      --text-2:        #3a3a3c;
+      --muted:         #8e8e93;
+      --muted-2:       #aeaeb2;
+      --red:           #ff3b30;
+      --orange:        #ff9500;
+      --green:         #34c759;
+      --blue:          #007aff;
+      --shadow-sm:     0 1px 3px rgba(0,0,0,0.07), 0 1px 2px rgba(0,0,0,0.04);
+      --shadow-md:     0 4px 16px rgba(0,0,0,0.08), 0 1px 4px rgba(0,0,0,0.04);
+      --shadow-lg:     0 8px 32px rgba(0,0,0,0.09), 0 2px 8px rgba(0,0,0,0.05);
+      --shadow-xl:     0 24px 64px rgba(0,0,0,0.13), 0 4px 16px rgba(0,0,0,0.06);
+      --radius-sm:     10px;
+      --radius:        18px;
+      --blur:          blur(28px) saturate(180%);
+    }
+
+    html, body {
+      height: 100%; overflow: hidden;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", "SF Pro Text", "Helvetica Neue", system-ui, sans-serif;
+      background: var(--bg); color: var(--text);
+      -webkit-font-smoothing: antialiased;
+    }
+
+    #map { position: fixed; inset: 0; z-index: 0; }
+
+    .panel {
+      background: var(--surface);
+      backdrop-filter: var(--blur);
+      -webkit-backdrop-filter: var(--blur);
+      border: 0.5px solid var(--border-strong);
+      border-radius: var(--radius);
+      box-shadow: var(--shadow-lg);
+    }
+
+    /* ─── Header ─────────────────────────────── */
+    #header {
+      position: fixed; top: 18px; left: 50%; transform: translateX(-50%);
+      z-index: 1000; display: flex; align-items: center; gap: 14px;
+      padding: 10px 16px 10px 13px; border-radius: 50px; white-space: nowrap;
+    }
+    #header svg { width: 18px; height: 18px; flex-shrink: 0; }
+    .pill { display: inline-flex; align-items: center; gap: 5px; padding: 3px 10px; border-radius: 50px; font-size: 11px; font-weight: 600; }
+    .pill-red { background: rgba(255,59,48,0.10); color: var(--red); }
+    .pill-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 2.4s ease-in-out infinite; }
+    @keyframes blink { 0%,100%{ opacity:1 } 50%{ opacity:0.25 } }
+    #geocode-status { font-size: 11px; color: var(--muted); font-weight: 500; }
+
+    /* ─── Left Sidebar — auto height, no bottom anchor ── */
+    #sidebar {
+      position: fixed; top: 70px; left: 18px;
+      width: 282px; z-index: 1000;
+      display: flex; flex-direction: column; gap: 10px;
+      max-height: calc(100vh - 88px);
+    }
+
+    .section-label {
+      font-size: 10px; font-weight: 700; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--muted); margin-bottom: 11px;
+    }
+
+    /* Stats — always fully visible */
+    #stats-panel { padding: 15px 15px 13px; flex-shrink: 0; }
+    .stat-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+    .stat-card { background: var(--bg); border: 0.5px solid var(--border); border-radius: var(--radius-sm); padding: 10px 11px; }
+    .stat-val { font-size: 22px; font-weight: 800; letter-spacing: -0.04em; line-height: 1; margin-bottom: 3px; }
+    .stat-lbl { font-size: 10px; color: var(--muted); font-weight: 500; }
+    .c-red { color: var(--red); } .c-orange { color: var(--orange); }
+    .c-blue { color: var(--blue); } .c-green { color: var(--green); }
+
+    /* Hotspots — scrolls only when list is taller than the remaining viewport */
+    #hotspots-panel {
+      flex-shrink: 1; min-height: 0;
+      display: flex; flex-direction: column;
+      padding: 14px 14px 10px;
+      overflow: hidden;
+    }
+    #hotspots-list {
+      overflow-y: auto;
+      /* grows with content, but caps so panel never pushes off-screen */
+      max-height: calc(100vh - 340px);
+      min-height: 0;
+      margin: 0 -4px; padding: 0 4px;
+    }
+    .hotspot-row { display: flex; align-items: center; gap: 9px; padding: 8px 7px; border-radius: 8px; cursor: pointer; transition: background 0.12s; }
+    .hotspot-row:hover { background: rgba(0,0,0,0.04); }
+    .hotspot-rank { font-size: 10px; font-weight: 700; color: var(--muted-2); width: 14px; flex-shrink: 0; text-align: center; }
+    .hotspot-addr { font-size: 12px; font-weight: 500; flex: 1; line-height: 1.3; color: var(--text-2); }
+    .hotspot-badge { font-size: 11px; font-weight: 700; background: rgba(255,59,48,0.09); color: var(--red); padding: 2px 8px; border-radius: 50px; }
+    #hotspots-list::-webkit-scrollbar { width: 3px; }
+    #hotspots-list::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    /* ─── Right panel slot ────────────────────── */
+    #right-slot {
+      position: fixed; top: 70px; right: 18px;
+      width: 252px; z-index: 1000;
+    }
+
+    /* ─── Filter Panel (collapsible) ─────────── */
+    #filter-panel { overflow: hidden; }
+
+    #filter-header {
+      display: flex; align-items: center; justify-content: space-between;
+      padding: 14px 15px; cursor: pointer; user-select: none;
+    }
+    #filter-header-left { display: flex; align-items: center; gap: 8px; }
+    #filter-header .section-label { margin-bottom: 0; }
+    #filter-toggle-icon {
+      width: 20px; height: 20px; border-radius: 50%;
+      background: var(--bg); border: 0.5px solid var(--border-strong);
+      display: flex; align-items: center; justify-content: center;
+      font-size: 10px; color: var(--muted); transition: transform 0.25s, background 0.15s;
+      flex-shrink: 0;
+    }
+    #filter-panel.collapsed #filter-toggle-icon { transform: rotate(-90deg); }
+    #filter-header:hover #filter-toggle-icon { background: rgba(0,0,0,0.06); }
+
+    #filter-body {
+      padding: 0 15px 15px;
+      transition: max-height 0.3s cubic-bezier(0.4,0,0.2,1), opacity 0.25s;
+      max-height: 600px; overflow: hidden; opacity: 1;
+    }
+    #filter-panel.collapsed #filter-body { max-height: 0; opacity: 0; pointer-events: none; }
+
+    /* Quick filter pills */
+    #quick-filters {
+      display: flex; gap: 6px; margin-bottom: 12px; flex-wrap: wrap;
+    }
+    .qf-btn {
+      flex: 1; min-width: 0; padding: 6px 4px;
+      background: var(--bg); border: 0.5px solid var(--border-strong);
+      border-radius: 50px; font-size: 11px; font-weight: 600;
+      color: var(--muted); font-family: inherit; cursor: pointer;
+      transition: all 0.15s; white-space: nowrap;
+    }
+    .qf-btn:hover { border-color: var(--red); color: var(--red); background: rgba(255,59,48,0.06); }
+    .qf-btn.active { background: rgba(255,59,48,0.10); border-color: rgba(255,59,48,0.3); color: var(--red); }
+
+    .filter-sep { height: 0.5px; background: var(--border); margin: 11px 0 10px; }
+    .filter-group { margin-bottom: 10px; }
+    .filter-group label {
+      font-size: 11px; font-weight: 600; color: var(--muted);
+      display: flex; justify-content: space-between; margin-bottom: 4px;
+    }
+    .filter-group label span { color: var(--text); font-weight: 700; }
+    .filter-group input[type=date], .filter-group select {
+      width: 100%; padding: 7px 10px; background: var(--bg);
+      border: 0.5px solid var(--border-strong); border-radius: var(--radius-sm);
+      color: var(--text); font-size: 12px; font-family: inherit;
+      outline: none; transition: border-color 0.2s, box-shadow 0.2s; appearance: none;
+    }
+    .filter-group input[type=date]:focus, .filter-group select:focus {
+      border-color: var(--blue); box-shadow: 0 0 0 3px rgba(0,122,255,0.12);
+    }
+    .filter-group select {
+      background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='10' height='6'%3E%3Cpath d='M0 0l5 6 5-6z' fill='%238e8e93'/%3E%3C/svg%3E");
+      background-repeat: no-repeat; background-position: right 10px center; padding-right: 26px;
+    }
+    #apply-filter {
+      width: 100%; padding: 9px; background: var(--red); border: none; border-radius: 50px;
+      color: #fff; font-size: 13px; font-weight: 700; font-family: inherit; cursor: pointer;
+      letter-spacing: -0.01em; transition: opacity 0.15s, transform 0.15s;
+    }
+    #apply-filter:hover { opacity: 0.88; }
+    #apply-filter:active { transform: scale(0.98); }
+    #reset-filter {
+      width: 100%; padding: 7px; margin-top: 6px; background: transparent;
+      border: 0.5px solid var(--border-strong); border-radius: 50px; color: var(--muted);
+      font-size: 12px; font-family: inherit; cursor: pointer; transition: all 0.15s;
+    }
+    #reset-filter:hover { color: var(--text); border-color: rgba(0,0,0,0.2); }
+
+    /* ─── Detail Panel (ticket modal) ────────── */
+    #detail-panel {
+      display: none;
+      animation: slide-in 0.22s cubic-bezier(0.34,1.2,0.64,1);
+    }
+    @keyframes slide-in { from { opacity:0; transform:translateY(-6px) scale(0.98) } to { opacity:1; transform:translateY(0) scale(1) } }
+
+    .detail-header {
+      display: flex; align-items: flex-start; justify-content: space-between;
+      padding: 15px 15px 12px;
+      border-bottom: 0.5px solid var(--border);
+    }
+    .detail-addr { font-size: 13px; font-weight: 700; letter-spacing: -0.02em; flex: 1; line-height: 1.35; padding-right: 10px; }
+    .detail-close {
+      width: 24px; height: 24px; border-radius: 50%;
+      background: var(--bg); border: 0.5px solid var(--border-strong);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      font-size: 12px; color: var(--muted); flex-shrink: 0;
+      transition: background 0.12s; font-family: inherit;
+    }
+    .detail-close:hover { background: rgba(0,0,0,0.08); color: var(--text); }
+
+    .detail-meta {
+      display: flex; gap: 8px; padding: 10px 15px;
+      border-bottom: 0.5px solid var(--border);
+    }
+    .detail-meta-card {
+      flex: 1; background: var(--bg); border: 0.5px solid var(--border);
+      border-radius: var(--radius-sm); padding: 8px 10px;
+    }
+    .detail-meta-val { font-size: 18px; font-weight: 800; letter-spacing: -0.03em; line-height: 1; }
+    .detail-meta-lbl { font-size: 10px; color: var(--muted); font-weight: 500; margin-top: 2px; }
+
+    .detail-tickets { max-height: calc(100vh - 340px); overflow-y: auto; }
+    .detail-tickets::-webkit-scrollbar { width: 3px; }
+    .detail-tickets::-webkit-scrollbar-thumb { background: var(--border-strong); border-radius: 3px; }
+
+    .detail-ticket-row {
+      display: flex; align-items: center; gap: 12px;
+      padding: 11px 15px; border-bottom: 0.5px solid var(--border);
+    }
+    .detail-ticket-row:last-child { border-bottom: none; }
+    .detail-ticket-num {
+      width: 28px; height: 28px; border-radius: 50%;
+      display: flex; align-items: center; justify-content: center;
+      font-size: 11px; font-weight: 800; color: #fff; flex-shrink: 0;
+    }
+    .detail-ticket-info { flex: 1; }
+    .detail-ticket-dt { font-size: 11px; color: var(--muted); }
+    .detail-ticket-code { font-size: 11px; font-weight: 500; color: var(--text-2); margin-top: 1px; }
+    .detail-ticket-code-tag { font-weight: 700; color: var(--orange); }
+    .detail-ticket-make { font-size: 11px; color: var(--blue); margin-top: 1px; }
+    .detail-ticket-amt { font-size: 15px; font-weight: 800; letter-spacing: -0.03em; }
+
+    /* ─── Controls ────────────────────────────── */
+    #controls { position: fixed; bottom: 22px; right: 18px; z-index: 1000; display: flex; flex-direction: column; gap: 9px; align-items: flex-end; }
+    #zoom-controls {
+      display: flex; flex-direction: column;
+      background: var(--surface); backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      border: 0.5px solid var(--border-strong); border-radius: var(--radius-sm);
+      box-shadow: var(--shadow-md); overflow: hidden;
+    }
+    .zoom-btn { width: 32px; height: 32px; background: transparent; border: none; font-size: 18px; font-weight: 300; color: var(--text); cursor: pointer; display: flex; align-items: center; justify-content: center; transition: background 0.12s; }
+    .zoom-btn:hover { background: rgba(0,0,0,0.05); }
+    .zoom-btn:first-child { border-bottom: 0.5px solid var(--border); }
+    #legend { display: flex; align-items: center; gap: 9px; padding: 8px 13px; }
+    .legend-label { font-size: 10px; font-weight: 600; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; }
+    .legend-items { display: flex; align-items: center; gap: 7px; }
+    .legend-item { display: flex; align-items: center; gap: 3px; }
+    .legend-dot { width: 8px; height: 8px; border-radius: 50%; }
+    .legend-item-lbl { font-size: 10px; color: var(--muted); font-weight: 500; }
+
+    /* ─── Dot annotation ──────────────────────── */
+    .mk-dot {
+      border-radius: 50%;
+      border: 3px solid rgba(255,255,255,0.96);
+      cursor: pointer;
+      display: flex; align-items: center; justify-content: center;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", system-ui, sans-serif;
+      font-weight: 800; color: #fff; letter-spacing: -0.03em;
+      transition: transform 0.15s cubic-bezier(0.34,1.56,0.64,1), box-shadow 0.15s;
+      position: relative;
+    }
+    .mk-dot:hover { transform: scale(1.28) !important; }
+
+    /* Pulsing ring for hotspots (count ≥ 4) */
+    .mk-dot-pulse::after {
+      content: '';
+      position: absolute;
+      inset: -5px;
+      border-radius: 50%;
+      border: 2.5px solid var(--pulse-color, #ff3b30);
+      opacity: 0;
+      animation: pulse-ring 2.2s ease-out infinite;
+    }
+    @keyframes pulse-ring {
+      0%   { transform: scale(1);   opacity: 0.65; }
+      100% { transform: scale(1.7); opacity: 0; }
+    }
+
+    /* ─── Loading ─────────────────────────────── */
+    #loading {
+      position: fixed; inset: 0; z-index: 3000; background: var(--bg);
+      display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 14px;
+      transition: opacity 0.45s ease;
+    }
+    #loading.fade-out { opacity: 0; pointer-events: none; }
+    .loading-icon { width: 50px; height: 50px; background: var(--red); border-radius: 14px; display: flex; align-items: center; justify-content: center; box-shadow: 0 8px 24px rgba(255,59,48,0.28); }
+    .loading-icon svg { width: 26px; height: 26px; fill: #fff; }
+    .loading-title { font-size: 20px; font-weight: 800; letter-spacing: -0.04em; }
+    .loading-title span { color: var(--red); }
+    .loading-sub { font-size: 12px; color: var(--muted); font-weight: 500; }
+
+    .mk-map-view { outline: none; }
+
+    /* ─── Mobile bottom-sheet system ─────────────── */
+    .sheet-handle {
+      width: 36px; height: 4px; border-radius: 2px;
+      background: var(--muted-2); margin: 10px auto 4px; flex-shrink: 0;
+      display: none;
+    }
+
+    #mobile-overlay {
+      display: none; position: fixed; inset: 0;
+      background: rgba(0,0,0,0.25);
+      backdrop-filter: blur(2px); -webkit-backdrop-filter: blur(2px);
+      z-index: 1050;
+    }
+    #mobile-overlay.active { display: block; }
+
+    /* Mobile FABs */
+    .m-fab {
+      display: none;
+      align-items: center; gap: 6px;
+      padding: 9px 14px; border-radius: 50px; border: none;
+      font-size: 12px; font-weight: 700; font-family: inherit;
+      cursor: pointer; z-index: 1000;
+      background: var(--surface);
+      backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+      border: 0.5px solid var(--border-strong);
+      box-shadow: var(--shadow-md);
+      color: var(--text); transition: opacity 0.15s, transform 0.15s;
+    }
+    .m-fab:active { transform: scale(0.96); opacity: 0.85; }
+    .m-fab svg { width: 14px; height: 14px; }
+
+    #m-stats-btn { position: fixed; bottom: 24px; left: 18px; }
+    #m-filter-btn { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); }
+
+    /* ─── Mobile overrides ────────────────────────── */
+    @media (max-width: 768px) {
+      /* Compact header */
+      #header {
+        top: 12px; gap: 9px;
+        padding: 8px 12px 8px 10px;
+        max-width: calc(100vw - 32px);
+      }
+      #header h1 { font-size: 12px; }
+      #geocode-status { display: none; }
+
+      /* Sidebar → bottom sheet */
+      #sidebar {
+        top: auto; left: 0; right: 0; bottom: 0;
+        width: 100%; max-height: 72vh;
+        border-radius: 20px 20px 0 0;
+        background: rgba(255,255,255,0.96);
+        backdrop-filter: var(--blur); -webkit-backdrop-filter: var(--blur);
+        border: 0.5px solid var(--border-strong);
+        box-shadow: var(--shadow-xl);
+        transform: translateY(100%);
+        transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
+        z-index: 1100; overflow-y: auto;
+        padding: 0 16px 32px;
+        display: flex; flex-direction: column; gap: 14px;
+      }
+      #sidebar.sheet-open { transform: translateY(0); }
+      #sidebar .sheet-handle { display: block; }
+      #hotspots-list { max-height: 32vh; }
+
+      /* Right slot → bottom sheet */
+      #right-slot {
+        top: auto; left: 0; right: 0; bottom: 0;
+        width: 100%;
+        transform: translateY(100%);
+        transition: transform 0.32s cubic-bezier(0.4,0,0.2,1);
+        z-index: 1100;
+      }
+      #right-slot.sheet-open { transform: translateY(0); }
+
+      #filter-panel, #detail-panel {
+        border-radius: 20px 20px 0 0;
+        max-height: 78vh; overflow-y: auto;
+      }
+      #filter-panel .sheet-handle,
+      #detail-panel .sheet-handle { display: block; }
+      .detail-tickets { max-height: 40vh; }
+
+      /* Controls — keep but push up slightly for FABs */
+      #controls { bottom: 80px; right: 14px; }
+      #legend { display: none; } /* hidden on mobile, shown in sheet */
+
+      /* FABs */
+      .m-fab { display: flex; }
+      #m-filter-btn { transform: none; left: auto; right: 70px; bottom: 24px; }
+    }
+
+    @media (max-width: 400px) {
+      #header h1 { display: none; }
+      #m-filter-btn { right: 60px; }
+    }
+  </style>
+</head>
+<body>
+
+<div id="loading">
+  <div class="loading-icon">
+    <svg viewBox="0 0 24 24"><path d="M12 2C8.13 2 5 5.13 5 9c0 5.25 7 13 7 13s7-7.75 7-13c0-3.87-3.13-7-7-7zm0 9.5c-1.38 0-2.5-1.12-2.5-2.5s1.12-2.5 2.5-2.5 2.5 1.12 2.5 2.5-1.12 2.5-2.5 2.5z"/></svg>
+  </div>
+  <div class="loading-title">MTL <span>Tickets</span></div>
+  <div class="loading-sub" id="loading-msg">Loading…</div>
+</div>
+
+<div id="mobile-overlay"></div>
+
+<div id="map">
+</div>
+
+<!-- Mobile FABs -->
+<button class="m-fab" id="m-stats-btn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><rect x="3" y="12" width="4" height="9"/><rect x="10" y="7" width="4" height="14"/><rect x="17" y="3" width="4" height="18"/></svg>
+  Stats
+</button>
+<button class="m-fab" id="m-filter-btn">
+  <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="4" y1="6" x2="20" y2="6"/><line x1="8" y1="12" x2="16" y2="12"/><line x1="11" y1="18" x2="13" y2="18"/></svg>
+  Filters
+</button>
+
+<!-- Header -->
+<div id="header" class="panel">
+  <svg viewBox="0 0 20 20" fill="none">
+    <path d="M10 1.5C6.96 1.5 4.5 3.96 4.5 7c0 4.375 5.5 11.5 5.5 11.5S15.5 11.375 15.5 7c0-3.04-2.46-5.5-5.5-5.5z" fill="#ff3b30"/>
+    <circle cx="10" cy="7" r="2.1" fill="white"/>
+  </svg>
+  <span class="pill pill-red"><span class="pill-dot"></span><span id="visible-count">0 tickets</span></span>
+</div>
+
+<!-- Left Sidebar -->
+<div id="sidebar">
+  <div class="sheet-handle"></div>
+  <div class="panel" id="stats-panel">
+    <div class="section-label">Overview</div>
+    <div class="stat-grid">
+      <div class="stat-card"><div class="stat-val c-red" id="stat-total">—</div><div class="stat-lbl">Total Tickets</div></div>
+      <div class="stat-card"><div class="stat-val c-orange" id="stat-revenue">—</div><div class="stat-lbl">Total Fines</div></div>
+      <div class="stat-card"><div class="stat-val c-blue" id="stat-locations">—</div><div class="stat-lbl">Locations</div></div>
+      <div class="stat-card"><div class="stat-val c-green" id="stat-avg">—</div><div class="stat-lbl">Avg Fine</div></div>
+    </div>
+  </div>
+  <div class="panel" id="hotspots-panel">
+    <div class="section-label">Top Hotspots</div>
+    <div id="hotspots-list"></div>
+  </div>
+</div>
+
+<!-- Right Panel Slot -->
+<div id="right-slot">
+
+  <!-- Filter Panel (collapsible) -->
+  <div class="panel" id="filter-panel">
+    <div class="sheet-handle"></div>
+    <div id="filter-header">
+      <div id="filter-header-left">
+        <div class="section-label">Filters</div>
+      </div>
+      <div id="filter-toggle-icon">▼</div>
+    </div>
+    <div id="filter-body">
+      <!-- Quick date ranges -->
+      <div id="quick-filters">
+        <button class="qf-btn" data-range="7">7 days</button>
+        <button class="qf-btn" data-range="14">14 days</button>
+        <button class="qf-btn" data-range="30">Month</button>
+        <button class="qf-btn" data-range="0">All</button>
+      </div>
+      <div class="filter-group"><label>From</label><input type="date" id="f-date-from" /></div>
+      <div class="filter-group"><label>To</label><input type="date" id="f-date-to" /></div>
+      <div class="filter-group">
+        <label>Offence Code</label>
+        <select id="f-offence"><option value="">All codes</option></select>
+      </div>
+      <button id="apply-filter">Apply</button>
+      <button id="reset-filter">Reset filters</button>
+    </div>
+  </div>
+
+  <!-- Detail Panel (shown on dot click) -->
+  <div class="panel" id="detail-panel">
+    <div class="sheet-handle"></div>
+    <div class="detail-header">
+      <div class="detail-addr" id="detail-addr">—</div>
+      <button class="detail-close" id="detail-close">✕</button>
+    </div>
+    <div class="detail-meta">
+      <div class="detail-meta-card">
+        <div class="detail-meta-val c-red" id="detail-count">—</div>
+        <div class="detail-meta-lbl">Tickets</div>
+      </div>
+      <div class="detail-meta-card">
+        <div class="detail-meta-val c-orange" id="detail-total">—</div>
+        <div class="detail-meta-lbl">Total Fines</div>
+      </div>
+    </div>
+    <div class="detail-tickets" id="detail-tickets"></div>
+  </div>
+
+</div>
+
+<!-- Controls -->
+<div id="controls">
+  <div id="zoom-controls">
+    <button class="zoom-btn" id="zoom-in">+</button>
+    <button class="zoom-btn" id="zoom-out">−</button>
+  </div>
+  <div id="legend" class="panel">
+    <span class="legend-label">Fine</span>
+    <div class="legend-items">
+      <div class="legend-item"><div class="legend-dot" style="background:#34c759"></div><span class="legend-item-lbl">Low</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff9500"></div><span class="legend-item-lbl">Mid</span></div>
+      <div class="legend-item"><div class="legend-dot" style="background:#ff3b30"></div><span class="legend-item-lbl">High</span></div>
+    </div>
+  </div>
+</div>
+
+<script>
+const TOKEN = 'eyJraWQiOiI5WENYQTIyMlZGIiwidHlwIjoiSldUIiwiYWxnIjoiRVMyNTYifQ.eyJpc3MiOiJaMldDMktLOTZYIiwiaWF0IjoxNzc2NzMxNzkxLCJzY29wZSI6Im1hcGtpdF9qcyIsImV4cCI6MTc3NzM1OTU5OX0.15vghYHA2-MG2UmD668K5yDdVOX6OamsJ1lz81ofcetpy36dPln38hxnVieczFS6WMp9oz-DzTYc0MdPE57Q2g';
+
+let geocoded = [], map = null;
+let currentAnnotations = [], lastFilteredData = [];
+
+// ── Offence codes ────────────────────────────────
+const OFFENCE_CODES = {
+  "A001": "No stopping zone",
+  "A006": "Parked more than 24 hours",
+  "A100": "No parking — sign violation",
+  "A101": "Exceeded time limit on sign",
+  "A105": "Parked in residents-only zone without permit",
+  "A106": "Parked in reserved/restricted zone",
+  "A113": "Parked blocking traffic flow",
+  "A126": "Parked in delivery/loading zone",
+  "A135": "Failed to pay meter/pay station",
+  "A137": "Parked too far from curb",
+  "A142": "Snow removal operation violation",
+  "A152": "Parked on sidewalk or bike path",
+  "A159": "Parked near fire hydrant",
+  "A164": "Blocking a driveway",
+  "A401": "Parked in bus stop/transit zone",
+  "A504": "Handicapped space without permit",
+  "P313": "Private parking — no authorization",
+  "P321": "Private lot — exceeded time limit",
+  "P325": "Private lot — wrong designated space",
+  "P329": "Private lot — blocked access/exit",
+  "P330": "Private lot — no permit displayed",
+  "P336": "Private lot — other violation",
+  "CR":   "Court proceedings / unpaid escalated",
+};
+
+// ── Date formatting ─────────────────────────────
+function formatDatetime(raw) {
+  if (!raw) return '—';
+  // raw is "2026-04-06 13:35:00" or "2026-04-06T13:35:00"
+  const normalized = raw.replace(' ', 'T');
+  const d = new Date(normalized);
+  if (isNaN(d)) return raw.slice(0, 16);
+  return d.toLocaleString('en-CA', {
+    weekday: 'long', month: 'long', day: 'numeric',
+    hour: 'numeric', minute: '2-digit', hour12: true,
+  });
+}
+
+// ── Colors ──────────────────────────────────────
+function amountColor(a) {
+  if (a <= 0)  return '#aeaeb2';
+  if (a < 75)  return '#34c759';
+  if (a < 150) return '#ff9500';
+  return '#ff3b30';
+}
+
+// ── Map ─────────────────────────────────────────
+function initMap() {
+  mapkit.init({ authorizationCallback: done => done(TOKEN), language: 'fr' });
+
+  map = new mapkit.Map('map', {
+    colorScheme:           mapkit.Map.ColorSchemes.Light,
+    mapType:               mapkit.Map.MapTypes.Standard,
+    showsCompass:          mapkit.FeatureVisibility.Hidden,
+    showsScale:            mapkit.FeatureVisibility.Hidden,
+    showsZoomControl:      false,
+    showsMapTypeControl:   false,
+    isRotationEnabled:     false,
+    showsPointsOfInterest: true,
+  });
+
+
+  map.element.addEventListener('click', e => {
+    if (!e.target.closest('.mk-dot')) closeDetail();
+  });
+
+  document.getElementById('zoom-in').addEventListener('click',  () => zoomBy(0.5));
+  document.getElementById('zoom-out').addEventListener('click', () => zoomBy(2));
+}
+
+function zoomBy(f) {
+  const r = map.region;
+  map.setRegionAnimated(new mapkit.CoordinateRegion(
+    r.center, new mapkit.CoordinateSpan(r.span.latitudeDelta * f, r.span.longitudeDelta * f)
+  ));
+}
+
+// ── Annotations ─────────────────────────────────
+function makeAnnotation(loc) {
+  const avg      = loc.totalAmt / Math.max(loc.tickets.length, 1);
+  const color    = amountColor(avg);
+  const size     = Math.min(20 + loc.count * 5, 64);
+  const fontSize = Math.max(10, Math.round(size * 0.36));
+  const isHot    = loc.count >= 4;
+
+  const shadowBase  = `0 3px 12px ${color}70, 0 1px 4px rgba(0,0,0,0.18)`;
+  const shadowHover = `0 6px 24px ${color}99, 0 2px 8px rgba(0,0,0,0.22)`;
+
+  const factory = () => {
+    const div = document.createElement('div');
+    div.className = 'mk-dot' + (isHot ? ' mk-dot-pulse' : '');
+    if (isHot) div.style.setProperty('--pulse-color', color);
+    Object.assign(div.style, {
+      width: size+'px', height: size+'px',
+      background: color,
+      fontSize: fontSize+'px',
+      boxShadow: shadowBase,
+    });
+    // Show count label when circle is big enough to fit it
+    if (size >= 28) div.textContent = loc.count;
+    div.addEventListener('mouseenter', () => div.style.boxShadow = shadowHover);
+    div.addEventListener('mouseleave', () => div.style.boxShadow = shadowBase);
+    div.addEventListener('click', e => { e.stopPropagation(); showDetail(loc); });
+    return div;
+  };
+
+  return new mapkit.Annotation(
+    new mapkit.Coordinate(loc.lat, loc.lng), factory,
+    { calloutEnabled: false, anchorOffset: new DOMPoint(0,0), data: loc }
+  );
+}
+
+// ── Detail Panel ─────────────────────────────────
+function showDetail(loc) {
+  document.getElementById('detail-addr').textContent  = loc.address;
+  document.getElementById('detail-count').textContent = loc.tickets.length;
+  document.getElementById('detail-total').textContent = '$' + Math.round(loc.totalAmt).toLocaleString();
+
+  document.getElementById('detail-tickets').innerHTML = loc.tickets.map((t, i) => {
+    const color   = amountColor(t.amount);
+    const dt      = formatDatetime(t.datetime);
+    const meaning = t.offence ? (OFFENCE_CODES[t.offence] || t.offence) : '—';
+    const codeTag = t.offence ? `<span class="detail-ticket-code-tag">${t.offence}</span> ` : '';
+    return `<div class="detail-ticket-row">
+      <div class="detail-ticket-num" style="background:${color}">${i + 1}</div>
+      <div class="detail-ticket-info">
+        <div class="detail-ticket-dt">${dt}</div>
+        <div class="detail-ticket-code">${codeTag}${meaning}</div>
+        ${t.make ? `<div class="detail-ticket-make">${t.make}</div>` : ''}
+      </div>
+      <div class="detail-ticket-amt" style="color:${color}">${t.amount > 0 ? '$' + t.amount.toFixed(0) : '—'}</div>
+    </div>`;
+  }).join('');
+
+  document.getElementById('filter-panel').style.display = 'none';
+  const dp = document.getElementById('detail-panel');
+  dp.style.display = 'block';
+  dp.style.animation = 'none';
+  dp.offsetHeight;
+  dp.style.animation = '';
+
+  if (isMobile()) {
+    // slide up without overlay so map stays scrollable
+    closeAllSheets();
+    document.getElementById('right-slot').classList.add('sheet-open');
+  }
+}
+
+function closeDetail() {
+  document.getElementById('detail-panel').style.display = 'none';
+  document.getElementById('filter-panel').style.display = 'block';
+  if (isMobile()) closeAllSheets();
+}
+
+// ── Mobile sheet helpers ─────────────────────────
+const isMobile = () => window.innerWidth <= 768;
+
+function openSheet(id) {
+  closeAllSheets();
+  document.getElementById(id).classList.add('sheet-open');
+  document.getElementById('mobile-overlay').classList.add('active');
+}
+
+function closeAllSheets() {
+  ['sidebar', 'right-slot'].forEach(id => document.getElementById(id).classList.remove('sheet-open'));
+  document.getElementById('mobile-overlay').classList.remove('active');
+}
+
+document.getElementById('mobile-overlay').addEventListener('click', closeAllSheets);
+document.getElementById('m-stats-btn').addEventListener('click', () => openSheet('sidebar'));
+document.getElementById('m-filter-btn').addEventListener('click', () => {
+  // ensure filter panel is visible (not detail)
+  closeDetail();
+  openSheet('right-slot');
+});
+
+// ── Filter toggle ────────────────────────────────
+document.getElementById('filter-header').addEventListener('click', () => {
+  if (!isMobile()) document.getElementById('filter-panel').classList.toggle('collapsed');
+});
+document.getElementById('detail-close').addEventListener('click', closeDetail);
+
+// ── Render ───────────────────────────────────────
+function renderMap(data) {
+  lastFilteredData = data;
+  closeDetail();
+  if (currentAnnotations.length) { map.removeAnnotations(currentAnnotations); currentAnnotations = []; }
+  currentAnnotations = data.map(makeAnnotation);
+  map.addAnnotations(currentAnnotations);
+  const total = data.reduce((s,l) => s+l.count, 0);
+  document.getElementById('visible-count').textContent = `${total} ticket${total!==1?'s':''}`;
+}
+
+// ── Stats ────────────────────────────────────────
+let _totalDb = 0;
+function updateStats(data, totalDb) {
+  if (totalDb !== undefined) _totalDb = totalDb;
+  const total   = data.reduce((s,l) => s+l.count, 0);
+  const revenue = data.reduce((s,l) => s+l.totalAmt, 0);
+  const avg     = total > 0 ? revenue/total : 0;
+  const label   = _totalDb > total ? `${total} <span style="font-size:11px;font-weight:500;color:var(--muted)">/ ${_totalDb}</span>` : `${total}`;
+  document.getElementById('stat-total').innerHTML       = label;
+  document.getElementById('stat-revenue').textContent   = '$'+Math.round(revenue).toLocaleString();
+  document.getElementById('stat-locations').textContent = data.length;
+  document.getElementById('stat-avg').textContent       = '$'+Math.round(avg);
+
+  document.getElementById('hotspots-list').innerHTML = [...data].sort((a,b)=>b.count-a.count).slice(0,10).map((l,i)=>`
+    <div class="hotspot-row" data-lat="${l.lat}" data-lng="${l.lng}" data-idx="${i}">
+      <span class="hotspot-rank">${i+1}</span>
+      <span class="hotspot-addr">${l.address}</span>
+      <span class="hotspot-badge">${l.count}</span>
+    </div>`).join('');
+
+  document.querySelectorAll('.hotspot-row').forEach(row => {
+    row.addEventListener('click', () => {
+      const lat=+row.dataset.lat, lng=+row.dataset.lng;
+      const coord = new mapkit.Coordinate(lat, lng);
+      map.setRegionAnimated(new mapkit.CoordinateRegion(coord, new mapkit.CoordinateSpan(0.004,0.004)));
+      const loc = lastFilteredData.find(l=>l.lat===lat&&l.lng===lng);
+      if (loc) setTimeout(() => showDetail(loc), 500);
+    });
+  });
+}
+
+// ── Filters ──────────────────────────────────────
+function getFiltered() {
+  const df=document.getElementById('f-date-from').value, dt=document.getElementById('f-date-to').value;
+  const off=document.getElementById('f-offence').value;
+  return geocoded.map(loc=>{
+    const tickets=loc.tickets.filter(t=>{
+      if(df&&(t.datetime||'').slice(0,10)<df) return false;
+      if(dt&&(t.datetime||'').slice(0,10)>dt) return false;
+      if(off&&t.offence!==off) return false;
+      return true;
+    });
+    if(!tickets.length) return null;
+    return {...loc, tickets, count:tickets.length, totalAmt:tickets.reduce((s,t)=>s+t.amount,0)};
+  }).filter(Boolean);
+}
+
+function populateCodes() {
+  const codes=new Set();
+  geocoded.forEach(l=>l.tickets.forEach(t=>{if(t.offence)codes.add(t.offence);}));
+  const sel=document.getElementById('f-offence');
+  [...codes].sort().forEach(c=>{const o=document.createElement('option');o.value=c;o.textContent=c;sel.appendChild(o);});
+}
+
+// ── Events ───────────────────────────────────────
+document.getElementById('apply-filter').addEventListener('click',()=>{const f=getFiltered();renderMap(f);updateStats(f);});
+document.getElementById('reset-filter').addEventListener('click',()=>{
+  ['f-date-from','f-date-to'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-offence').value='';
+  document.querySelectorAll('.qf-btn').forEach(b=>b.classList.remove('active'));
+  const f=getFiltered();renderMap(f);updateStats(f);
+});
+document.querySelectorAll('.qf-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    const f=getFiltered(); renderMap(f); updateStats(f);
+  });
+});
+
+// Quick date filters
+document.querySelectorAll('.qf-btn').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.qf-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    const days = +btn.dataset.range;
+    const to = new Date();
+    const toStr = to.toISOString().slice(0,10);
+    if (days === 0) {
+      document.getElementById('f-date-from').value = '';
+      document.getElementById('f-date-to').value   = '';
+    } else {
+      const from = new Date(to); from.setDate(from.getDate() - days);
+      document.getElementById('f-date-from').value = from.toISOString().slice(0,10);
+      document.getElementById('f-date-to').value   = toStr;
+    }
+    const f=getFiltered(); renderMap(f); updateStats(f);
+  });
+});
+
+// ── Boot ─────────────────────────────────────────
+async function boot() {
+  initMap();
+  let data;
+  try { const r=await fetch('map_tickets.json'); data=await r.json(); }
+  catch { document.getElementById('loading-msg').textContent='Could not load map_tickets.json — run: python -m http.server 8000'; return; }
+
+  geocoded=(data.locations||[]).filter(l=>l.lat&&l.lng).map(l=>({...l,totalAmt:l.tickets.reduce((s,t)=>s+t.amount,0)}));
+  populateCodes();
+  const filtered=getFiltered(); renderMap(filtered); updateStats(filtered, data.total_db);
+
+  if(geocoded.length>1){
+    const lats=geocoded.map(l=>l.lat), lngs=geocoded.map(l=>l.lng);
+    map.setRegionAnimated(new mapkit.CoordinateRegion(
+      new mapkit.Coordinate((Math.min(...lats)+Math.max(...lats))/2,(Math.min(...lngs)+Math.max(...lngs))/2),
+      new mapkit.CoordinateSpan((Math.max(...lats)-Math.min(...lats))*1.35,(Math.max(...lngs)-Math.min(...lngs))*1.35)
+    ));
+  }
+
+  const loading=document.getElementById('loading');
+  loading.classList.add('fade-out');
+  setTimeout(()=>loading.style.display='none',450);
+}
+
+boot();
+</script>
+</body>
+</html>
