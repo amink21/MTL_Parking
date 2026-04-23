@@ -35,8 +35,8 @@ DB_PATH  = "tickets.db"
 MAP_PATH = "map_tickets.json"
 
 ANCHOR        = 918_431_345
-STEPS_BACK    = 7_000
-STEPS_FORWARD = 5_000   # larger forward window to catch new tickets each day
+STEPS_BACK    = 3_000
+STEPS_FORWARD = 2_500   # larger forward window to catch new tickets each day
 DELAY         = 0.2
 
 # Re-check NOT_FOUND tickets younger than this many days (city adds tickets with delay)
@@ -86,7 +86,10 @@ def generate_window(anchor, steps_back, steps_forward):
     high = anchor
     for _ in range(steps_forward):
         high = next_ticket(high)
-    return [n for n in range(low, high + 1) if (n % 10) not in (7, 8, 9)]
+    valid = [n for n in range(low, high + 1) if (n % 10) not in (7, 8, 9)]
+    # Scan forward half first (newer tickets), then backward half
+    mid = next((i for i, n in enumerate(valid) if n >= anchor), len(valid))
+    return valid[mid:] + valid[:mid]
 
 
 # ─────────────────────────────────────────────
