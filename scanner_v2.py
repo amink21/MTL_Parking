@@ -42,9 +42,17 @@ DELAY         = 0.2
 # Re-check NOT_FOUND tickets younger than this many days (city adds tickets with delay)
 RECHECK_DAYS = 14
 
-# Supabase — reads from environment variables (set as GitHub Actions secrets)
+# Supabase — reads from .env locally, environment variables in CI
 import os as _os
-SUPABASE_URL = _os.getenv("SUPABASE_URL", "https://gkitztfupqxuhskvxtzw.supabase.co")
+_env_path = _os.path.join(_os.path.dirname(__file__), ".env")
+if _os.path.exists(_env_path):
+    for _line in open(_env_path):
+        _line = _line.strip()
+        if _line and not _line.startswith("#") and "=" in _line:
+            _k, _v = _line.split("=", 1)
+            _os.environ.setdefault(_k.strip(), _v.strip())
+
+SUPABASE_URL = _os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = _os.getenv("SUPABASE_KEY", "")
 
 # Headless mode: always True in CI, False locally so you can see the browser
@@ -200,6 +208,28 @@ def upload_to_supabase(tickets):
         print(f"  Supabase: {len(records)} ticket(s) uploaded")
     else:
         print(f"  Supabase upload error: {r.status_code} — {r.text[:120]}")
+
+def upload_map_to_storage():
+    """Push map_tickets.json to Supabase Storage so the hosted frontend can fetch it."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        with open(MAP_PATH, "rb") as f:
+            data = f.read()
+        url = f"{SUPABASE_URL}/storage/v1/object/maps/map_tickets.json"
+        headers = {
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type":  "application/json",
+            "x-upsert":      "true",
+        }
+        r = requests.put(url, data=data, headers=headers)
+        if r.status_code in (200, 201):
+            print(f"  Storage: map_tickets.json uploaded ({len(data)/1024:.1f} KB)")
+        else:
+            print(f"  Storage upload error: {r.status_code} — {r.text[:120]}")
+    except Exception as e:
+        print(f"  Storage upload error: {e}")
 
 # Pending inserts buffered here; flushed every COMMIT_EVERY rows.
 _scanned_buf = []
@@ -622,6 +652,7 @@ def run_scanner():
     print(f"\nDONE — Hits:{hits:,} | Not found:{not_found:,} | Errors:{errors:,}")
     show_stats(conn)
     export_map(conn)
+    upload_map_to_storage()
     conn.close()
 
 
@@ -664,6 +695,7 @@ if __name__ == "__main__":
     elif len(sys.argv) > 1 and sys.argv[1] == "map":
         conn = init_db()
         export_map(conn)
+        upload_map_to_storage()
         conn.close()
     elif len(sys.argv) > 1 and sys.argv[1] == "test":
         num = int(sys.argv[2]) if len(sys.argv) > 2 else 918432023

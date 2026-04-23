@@ -811,9 +811,17 @@ document.querySelectorAll('.qf-btn').forEach(btn => {
 // ── Boot ─────────────────────────────────────────
 async function boot() {
   initMap();
+  // Fetch from Supabase Storage (cloud) or fall back to local file for dev
+  const DATA_URL = 'https://gkitztfupqxuhskvxtzw.supabase.co/storage/v1/object/public/maps/map_tickets.json';
   let data;
-  try { const r=await fetch('map_tickets.json'); data=await r.json(); }
-  catch { document.getElementById('loading-msg').textContent='Could not load map_tickets.json — run: python -m http.server 8000'; return; }
+  try {
+    const r = await fetch(DATA_URL);
+    if (!r.ok) throw new Error(r.status);
+    data = await r.json();
+  } catch {
+    try { const r=await fetch('map_tickets.json'); data=await r.json(); }
+    catch { document.getElementById('loading-msg').textContent='Could not load ticket data.'; return; }
+  }
 
   geocoded=(data.locations||[]).filter(l=>l.lat&&l.lng).map(l=>({...l,totalAmt:l.tickets.reduce((s,t)=>s+t.amount,0)}));
   populateCodes();
