@@ -377,7 +377,7 @@ _ABBREV = [
 import re as _re
 
 # Articles that Montreal's ticket system appends to the end of street names
-# e.g. "RUE NOUE DE" → "Rue de la Noue", "RUE MAITRE LE" → "Rue le Maître"
+# e.g. "RUE NOUE DE" -> "Rue de la Noue", "RUE MAITRE LE" -> "Rue le Maître"
 _TRAILING_ARTICLES = _re.compile(
     r'^(.*?)\s+(DE LA|DE L|DU|DES|DE|LE|LA|LES|L)\s*$', _re.IGNORECASE
 )
@@ -552,11 +552,11 @@ def export_map(conn):
     for i, addr in enumerate(need):
         result = geocode_address(addr, cache, session)
         status = f"{result['lat']:.4f},{result['lng']:.4f}" if result else "FAILED"
-        print(f"  [{i+1}/{len(need)}] {addr} → {status}")
+        print(f"  [{i+1}/{len(need)}] {addr} -> {status}")
         if (i + 1) % 10 == 0 or i == len(need) - 1:
             _save_geo_cache(cache)
             placed = _write_map_json()
-            print(f"  → map_tickets.json updated ({placed} locations placed)")
+            print(f"  -> map_tickets.json updated ({placed} locations placed)")
         time.sleep(1.1)
 
     placed = _write_map_json()
@@ -641,12 +641,16 @@ def run_scanner():
                     if addr and addr not in geo_cache:
                         result = geocode_address(addr, geo_cache, geo_session)
                         geo_status = f"{result['lat']:.4f},{result['lng']:.4f}" if result else "FAILED"
-                        print(f"    geo: {addr[:40]} → {geo_status}")
+                        print(f"    geo: {addr[:40]} -> {geo_status}")
                         time.sleep(1.1)  # Nominatim rate limit
                     if new_hits % GEO_FLUSH_EVERY == 0:
                         _save_geo_cache(geo_cache)
                         export_map(conn)
                         print(f"  [map updated — {new_hits} new hits so far]")
+                    # Upload to Supabase in batches of 10
+                    if len(new_tickets_buf) >= 10:
+                        upload_to_supabase(new_tickets_buf)
+                        new_tickets_buf.clear()
 
             elif status == "NOT_FOUND":
                 not_found += 1
