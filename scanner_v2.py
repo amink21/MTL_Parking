@@ -212,6 +212,32 @@ def upload_to_supabase(tickets):
     else:
         print(f"  Supabase upload error: {r.status_code} — {r.text[:120]}")
 
+def upload_health_check(new_tickets, total_tickets):
+    """Write a small status JSON to Supabase Storage so the frontend can show last-run info."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    try:
+        payload = json.dumps({
+            "last_run":       datetime.now().isoformat(),
+            "status":         "ok",
+            "new_tickets":    new_tickets,
+            "total_tickets":  total_tickets,
+        }).encode()
+        url = f"{SUPABASE_URL}/storage/v1/object/maps/health.json"
+        headers = {
+            "apikey":        SUPABASE_KEY,
+            "Authorization": f"Bearer {SUPABASE_KEY}",
+            "Content-Type":  "application/json",
+            "x-upsert":      "true",
+        }
+        r = requests.put(url, data=payload, headers=headers)
+        if r.status_code in (200, 201):
+            print(f"  Health check uploaded (new: {new_tickets}, total: {total_tickets})")
+        else:
+            print(f"  Health check error: {r.status_code}")
+    except Exception as e:
+        print(f"  Health check error: {e}")
+
 def upload_map_to_storage():
     """Push map_tickets.json to Supabase Storage so the hosted frontend can fetch it."""
     if not SUPABASE_URL or not SUPABASE_KEY:
@@ -656,6 +682,8 @@ def run_scanner():
     show_stats(conn)
     export_map(conn)
     upload_map_to_storage()
+    total_in_db = conn.execute("SELECT COUNT(*) FROM tickets").fetchone()[0]
+    upload_health_check(len(new_tickets_buf), total_in_db)
     conn.close()
 
 

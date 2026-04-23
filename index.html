@@ -61,6 +61,8 @@
     .pill-dot { width: 5px; height: 5px; border-radius: 50%; background: currentColor; animation: blink 2.4s ease-in-out infinite; }
     @keyframes blink { 0%,100%{ opacity:1 } 50%{ opacity:0.25 } }
     #geocode-status { font-size: 11px; color: var(--muted); font-weight: 500; }
+    #last-updated { font-size: 11px; color: var(--muted); font-weight: 500; display: flex; align-items: center; gap: 5px; }
+    #last-updated-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--green); flex-shrink: 0; }
 
     /* ─── Left Sidebar — auto height, no bottom anchor ── */
     #sidebar {
@@ -430,6 +432,7 @@
     <circle cx="10" cy="7" r="2.1" fill="white"/>
   </svg>
   <span class="pill pill-red"><span class="pill-dot"></span><span id="visible-count">0 tickets</span></span>
+  <span id="last-updated"><span id="last-updated-dot"></span><span id="last-updated-text">—</span></span>
 </div>
 
 <!-- Left Sidebar -->
@@ -812,7 +815,8 @@ document.querySelectorAll('.qf-btn').forEach(btn => {
 async function boot() {
   initMap();
   // Fetch from Supabase Storage (cloud) or fall back to local file for dev
-  const DATA_URL = 'https://gkitztfupqxuhskvxtzw.supabase.co/storage/v1/object/public/maps/map_tickets.json';
+  const DATA_URL   = 'https://gkitztfupqxuhskvxtzw.supabase.co/storage/v1/object/public/maps/map_tickets.json';
+  const HEALTH_URL = 'https://gkitztfupqxuhskvxtzw.supabase.co/storage/v1/object/public/maps/health.json';
   let data;
   try {
     const r = await fetch(DATA_URL);
@@ -835,9 +839,32 @@ async function boot() {
     ));
   }
 
+  // Health check — show last run time
+  try {
+    const h = await fetch(HEALTH_URL + '?t=' + Date.now());
+    if (h.ok) {
+      const hd = await h.json();
+      const ago = timeAgo(new Date(hd.last_run));
+      const dot = document.getElementById('last-updated-dot');
+      const txt = document.getElementById('last-updated-text');
+      txt.textContent = `Updated ${ago}`;
+      // Turn dot red if last run was more than 26 hours ago
+      const hours = (Date.now() - new Date(hd.last_run)) / 36e5;
+      if (hours > 26) dot.style.background = 'var(--red)';
+    }
+  } catch(e) {}
+
   const loading=document.getElementById('loading');
   loading.classList.add('fade-out');
   setTimeout(()=>loading.style.display='none',450);
+}
+
+function timeAgo(date) {
+  const s = Math.floor((Date.now() - date) / 1000);
+  if (s < 60)   return `${s}s ago`;
+  if (s < 3600) return `${Math.floor(s/60)}m ago`;
+  if (s < 86400) return `${Math.floor(s/3600)}h ago`;
+  return `${Math.floor(s/86400)}d ago`;
 }
 
 boot();
