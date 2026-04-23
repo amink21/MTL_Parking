@@ -36,8 +36,19 @@ MAP_PATH = "map_tickets.json"
 
 ANCHOR        = 918_431_345
 STEPS_BACK    = 7_000
-STEPS_FORWARD = 1_000
+STEPS_FORWARD = 5_000   # larger forward window to catch new tickets each day
 DELAY         = 0.2
+
+# Re-check NOT_FOUND tickets younger than this many days (city adds tickets with delay)
+RECHECK_DAYS = 14
+
+# Supabase — reads from environment variables (set as GitHub Actions secrets)
+import os as _os
+SUPABASE_URL = _os.getenv("SUPABASE_URL", "https://gkitztfupqxuhskvxtzw.supabase.co")
+SUPABASE_KEY = _os.getenv("SUPABASE_KEY", "")
+
+# Headless mode: always True in CI, False locally so you can see the browser
+HEADLESS = _os.getenv("CI", "false").lower() in ("true", "1")
 
 # Refresh token every N requests (token expires ~60 min)
 TOKEN_REFRESH_EVERY = 800
@@ -145,6 +156,50 @@ def load_known_numbers(conn):
     c.execute("SELECT ticket_number FROM tickets")
     known.update(row[0] for row in c.fetchall())
     return known
+
+def purge_recent_not_found(conn, days=RECHECK_DAYS):
+    """Remove NOT_FOUND entries scanned within the last N days so they get rechecked.
+    The city adds tickets to their system with a delay, so a miss today may hit tomorrow."""
+    cutoff = (datetime.now() - __import__('datetime').timedelta(days=days)).isoformat()
+    c = conn.cursor()
+    c.execute(
+        "DELETE FROM scanned WHERE result='NOT_FOUND' AND scanned_at >= ?",
+        (cutoff,)
+    )
+    conn.commit()
+    removed = c.rowcount
+    if removed:
+        print(f"  Cleared {removed:,} recent NOT_FOUND entries for recheck (last {days} days)")
+
+def upload_to_supabase(tickets):
+    """Upload a list of new ticket dicts to Supabase. Skips if no key configured."""
+    if not SUPABASE_URL or not SUPABASE_KEY:
+        return
+    headers = {
+        "apikey":        SUPABASE_KEY,
+        "Authorization": f"Bearer {SUPABASE_KEY}",
+        "Content-Type":  "application/json",
+        "Prefer":        "resolution=merge-duplicates",
+    }
+    url     = f"{SUPABASE_URL}/rest/v1/tickets"
+    records = [
+        {
+            "ticket_number":   t["number"],
+            "datetime_issued": t["datetime"] or None,
+            "location":        t["location"] or None,
+            "offence_code":    t["offence_code"] or None,
+            "amount":          t["amount"],
+            "vehicle_make":    t["vehicle_make"] or None,
+            "is_payable":      bool(t.get("is_payable")),
+            "scraped_at":      datetime.now().isoformat(),
+        }
+        for t in tickets
+    ]
+    r = requests.post(url, json=records, headers=headers)
+    if r.status_code in (200, 201):
+        print(f"  Supabase: {len(records)} ticket(s) uploaded")
+    else:
+        print(f"  Supabase upload error: {r.status_code} — {r.text[:120]}")
 
 # Pending inserts buffered here; flushed every COMMIT_EVERY rows.
 _scanned_buf = []
@@ -468,11 +523,14 @@ def run_scanner():
 
     # Get token via Selenium
     print("Getting auth token via Selenium...")
-    token = fetch_token(headless=False)
+    token = fetch_token(headless=HEADLESS)
     if not token:
         print("ERROR: Could not get token. Try running: python get_token.py --visible")
         return
     print(f"Token OK: {token[:40]}...\n")
+
+    # Re-open recently-missed IDs so the city's delayed entries get picked up
+    purge_recent_not_found(conn)
 
     # Generate window — skip anything already in scanned or tickets tables
     print("Generating scan window...")
@@ -485,6 +543,7 @@ def run_scanner():
     print(f"  Est. time     : ~{len(to_scan) * DELAY / 60:.0f} minutes\n")
 
     hits = not_found = errors = new_hits = 0
+    new_tickets_buf = []  # buffer for Supabase upload
     GEO_FLUSH_EVERY = 10
 
     # Load geocache upfront so we geocode inline and never redo cached addresses
@@ -497,7 +556,7 @@ def run_scanner():
             # Refresh token periodically
             if i > 0 and i % TOKEN_REFRESH_EVERY == 0:
                 print(f"\n  Refreshing token at step {i:,}...")
-                new_token = fetch_token(headless=False)
+                new_token = fetch_token(headless=HEADLESS)
                 if new_token:
                     token = new_token
                     print(f"  Token refreshed OK\n")
@@ -517,6 +576,7 @@ def run_scanner():
 
                 # Geocode inline — skip if address already cached
                 if is_new:
+                    new_tickets_buf.append(ticket)
                     new_hits += 1
                     addr = ticket.get("location", "")
                     if addr and addr not in geo_cache:
@@ -534,7 +594,7 @@ def run_scanner():
 
             elif status == "AUTH_EXPIRED":
                 print(f"\n  Token expired at {n:,}, refreshing...")
-                new_token = fetch_token(headless=False)
+                new_token = fetch_token(headless=HEADLESS)
                 if new_token:
                     token = new_token
                     print(f"  Token refreshed OK\n")
@@ -557,6 +617,8 @@ def run_scanner():
 
     _flush_scanned(conn)  # commit any remaining buffered rows
     _save_geo_cache(geo_cache)
+    if new_tickets_buf:
+        upload_to_supabase(new_tickets_buf)
     print(f"\nDONE — Hits:{hits:,} | Not found:{not_found:,} | Errors:{errors:,}")
     show_stats(conn)
     export_map(conn)
@@ -571,7 +633,7 @@ def test_single(ticket_num):
     session = requests.Session()
 
     print("Getting token via Selenium...")
-    token = fetch_token(headless=False)
+    token = fetch_token(headless=HEADLESS)
     if not token:
         print("ERROR: Could not get token")
         return

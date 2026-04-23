@@ -1,0 +1,49 @@
+name: Daily Ticket Scan
+
+on:
+  schedule:
+    - cron: '0 4 * * *'   # 4 AM UTC = midnight Montreal time (EDT, UTC-4)
+  workflow_dispatch:        # allows manual trigger from GitHub UI
+
+jobs:
+  scan:
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.10'
+
+      - name: Install dependencies
+        run: pip install requests selenium webdriver-manager
+
+      - name: Restore DB and geocache from previous run
+        uses: actions/cache/restore@v4
+        with:
+          path: |
+            tickets.db
+            geocache.json
+          key: scanner-data-${{ github.run_number }}
+          restore-keys: |
+            scanner-data-
+
+      - name: Run scanner
+        env:
+          CI: "true"
+          SUPABASE_URL: ${{ secrets.SUPABASE_URL }}
+          SUPABASE_KEY: ${{ secrets.SUPABASE_KEY }}
+        run: python scanner_v2.py
+
+      - name: Save DB and geocache for next run
+        uses: actions/cache/save@v4
+        if: always()
+        with:
+          path: |
+            tickets.db
+            geocache.json
+          key: scanner-data-${{ github.run_number }}

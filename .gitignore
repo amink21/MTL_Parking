@@ -21,6 +21,7 @@ env/
 .env
 .env.local
 .env.*.local
+upload_to_supabase.py
 
 # OS
 .DS_Store
@@ -36,3 +37,4 @@ desktop.ini
 
 # Logs
 *.log
+logs/
