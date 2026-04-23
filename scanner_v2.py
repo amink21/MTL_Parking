@@ -55,8 +55,8 @@ if _os.path.exists(_env_path):
 SUPABASE_URL = _os.getenv("SUPABASE_URL", "")
 SUPABASE_KEY = _os.getenv("SUPABASE_KEY", "")
 
-# Headless mode: always True in CI, False locally so you can see the browser
-HEADLESS = _os.getenv("CI", "false").lower() in ("true", "1")
+# Use virtual display in CI (Xvfb) instead of headless — reCAPTCHA blocks headless IPs
+HEADLESS = _os.getenv("HEADLESS", "false").lower() in ("true", "1")
 
 # Refresh token every N requests (token expires ~60 min)
 TOKEN_REFRESH_EVERY = 800
