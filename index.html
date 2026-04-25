@@ -242,6 +242,12 @@
     .detail-ticket-code-tag { font-weight: 700; color: var(--orange); }
     .detail-ticket-make { font-size: 11px; color: var(--blue); margin-top: 1px; }
     .detail-ticket-amt { font-size: 15px; font-weight: 800; letter-spacing: -0.03em; }
+    .detail-ticket-meta { display: flex; gap: 5px; margin-top: 3px; align-items: center; flex-wrap: wrap; }
+    .status-badge { font-size: 9px; font-weight: 700; padding: 1px 5px; border-radius: 4px; text-transform: uppercase; letter-spacing: 0.04em; }
+    .status-OK  { background: #ff3b3020; color: #ff3b30; }
+    .status-PD  { background: #34c75920; color: #34c759; }
+    .status-OT  { background: #ff950020; color: #ff9500; }
+    .origin-tag { font-size: 9px; color: var(--muted); font-weight: 500; }
 
     /* ─── Controls ────────────────────────────── */
     #controls { position: fixed; bottom: 22px; right: 18px; z-index: 1000; display: flex; flex-direction: column; gap: 9px; align-items: flex-end; }
@@ -532,29 +538,69 @@ let currentAnnotations = [], lastFilteredData = [];
 
 // ── Offence codes ────────────────────────────────
 const OFFENCE_CODES = {
-  "A001": "No stopping zone",
-  "A006": "Parked more than 24 hours",
+  // A CODES — Municipal bylaw violations (parking agents)
+  "A001": "Exceeded time limit on sign",
+  "A003": "No parking — sign violation (Verdun)",
+  "A006": "Failed to pay pay station (borne)",
+  "A008": "Commercial vehicle parked more than 1 hour",
+  "A012": "Vehicle extends outside metered space boundaries",
+  "A018": "Failed to pay ticket distributor",
   "A100": "No parking — sign violation",
-  "A101": "Exceeded time limit on sign",
-  "A105": "Parked in residents-only zone without permit",
-  "A106": "Parked in reserved/restricted zone",
-  "A113": "Parked blocking traffic flow",
-  "A126": "Parked in delivery/loading zone",
-  "A135": "Failed to pay meter/pay station",
-  "A137": "Parked too far from curb",
-  "A142": "Snow removal operation violation",
-  "A152": "Parked on sidewalk or bike path",
-  "A159": "Parked near fire hydrant",
-  "A164": "Blocking a driveway",
-  "A401": "Parked in bus stop/transit zone",
-  "A504": "Handicapped space without permit",
-  "P313": "Private parking — no authorization",
-  "P321": "Private lot — exceeded time limit",
-  "P325": "Private lot — wrong designated space",
-  "P329": "Private lot — blocked access/exit",
-  "P330": "Private lot — no permit displayed",
-  "P336": "Private lot — other violation",
-  "CR":   "Court proceedings / unpaid escalated",
+  "A101": "No parking — sign violation (time-limited)",
+  "A105": "Parked in residents-only zone without permit (CDN-NDG)",
+  "A106": "Parked in no-stopping zone",
+  "A107": "Parked within 2 metres of fire hydrant (Anjou)",
+  "A112": "No parking — sign violation (RDP-PAT)",
+  "A113": "Parked in laneway/alley (ruelle)",
+  "A125": "Parked in residents-only zone without permit (RDP-PAT)",
+  "A126": "Parked in restricted zone — exemption not met",
+  "A127": "Truck/commercial vehicle in residential zone (Saint-Léonard)",
+  "A128": "Parked in space blocked by barrier/cone/meter hood",
+  "A130": "Failed to display distributor ticket (LaSalle)",
+  "A135": "Exceeded time limit on sign (RDP-PAT)",
+  "A137": "Vehicle parked more than 15cm from curb",
+  "A142": "Parked during snow removal operation",
+  "A143": "Parked in drop-off zone too long",
+  "A144": "Detached trailer parked on public road",
+  "A150": "Parked in residents zone with wrong/expired permit",
+  "A151": "Failed to pay pay station (Verdun/LaSalle)",
+  "A152": "Non-compliant with private parking lot signage",
+  "A157": "Parked during street cleaning/maintenance operation",
+  "A159": "Parked during special event — reserved space ($385)",
+  "A160": "Parked in temporarily reserved space (construction)",
+  "A164": "Stopped in no-stopping zone",
+  "A203": "Stopped at intersection — no stopping zone (Verdun)",
+  "A274": "Parked in residents-only zone (Saint-Léonard evening)",
+  "A303": "Blocking driveway entrance or curb ramp (Anjou)",
+  "A306": "Parked during snow removal — towed (RDP-PAT) ($385)",
+  "A377": "Non-passenger vehicle in residential sector (Anjou)",
+  "A401": "Parked in bus stop zone (LaSalle)",
+  "A504": "Parked in handicapped space without permit",
+  // P CODES — Provincial law violations (police officers)
+  "P302": "Parked within 5m of intersection or laneway entrance",
+  "P313": "Parked in handicapped space without permit ($338)",
+  "P315": "Parked more than 30cm from curb or facing wrong direction",
+  "P317": "Parked within 5m of fire hydrant",
+  "P321": "Parked on sidewalk or in crosswalk",
+  "P325": "Blocking driveway entrance",
+  "P329": "Parked in bus stop zone",
+  "P330": "Parked at intersection / within 5m of crosswalk",
+  "P336": "Blocking handicapped curb ramp",
+  "P640": "Parked blocking bicycle path",
+  "P641": "Parked in or blocking designated bike lane",
+  // Other
+  "CR":   "Court proceedings / unpaid escalated fine",
+};
+
+const ORIGIN_CODES = {
+  "RM": "Parking agent",
+  "CS": "Police (SPVM)",
+};
+
+const STATUS_CODES = {
+  "OK": "Unpaid",
+  "OT": "Contested",
+  "PD": "Paid",
 };
 
 // ── Date formatting ─────────────────────────────
@@ -651,16 +697,25 @@ function showDetail(loc) {
   document.getElementById('detail-total').textContent = '$' + Math.round(loc.totalAmt).toLocaleString();
 
   document.getElementById('detail-tickets').innerHTML = loc.tickets.map((t, i) => {
-    const color   = amountColor(t.amount);
-    const dt      = formatDatetime(t.datetime);
-    const meaning = t.offence ? (OFFENCE_CODES[t.offence] || t.offence) : '—';
-    const codeTag = t.offence ? `<span class="detail-ticket-code-tag">${t.offence}</span> ` : '';
+    const color      = amountColor(t.amount);
+    const dt         = formatDatetime(t.datetime);
+    const meaning    = t.offence ? (OFFENCE_CODES[t.offence] || t.offence) : '—';
+    const codeTag    = t.offence ? `<span class="detail-ticket-code-tag">${t.offence}</span> ` : '';
+    const statusKey   = (t.status || '').toUpperCase();
+    const statusLbl   = STATUS_CODES[statusKey] || statusKey;
+    const statusBadge = statusKey ? `<span class="status-badge status-${statusKey}">${statusLbl}</span>` : '';
+    // Derive issuer from offence code prefix: A → parking agent, P → police
+    const codePrefix  = t.offence ? t.offence.charAt(0).toUpperCase() : '';
+    const derivedOrigin = codePrefix === 'A' ? 'RM' : codePrefix === 'P' ? 'CS' : (t.origin || '').toUpperCase();
+    const originLbl   = ORIGIN_CODES[derivedOrigin] || '';
+    const originTag   = originLbl ? `<span class="origin-tag">${originLbl}</span>` : '';
     return `<div class="detail-ticket-row">
       <div class="detail-ticket-num" style="background:${color}">${i + 1}</div>
       <div class="detail-ticket-info">
         <div class="detail-ticket-dt">${dt}</div>
         <div class="detail-ticket-code">${codeTag}${meaning}</div>
         ${t.make ? `<div class="detail-ticket-make">${t.make}</div>` : ''}
+        <div class="detail-ticket-meta">${statusBadge}${originTag}</div>
       </div>
       <div class="detail-ticket-amt" style="color:${color}">${t.amount > 0 ? '$' + t.amount.toFixed(0) : '—'}</div>
     </div>`;

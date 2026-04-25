@@ -35,8 +35,8 @@ DB_PATH  = "tickets.db"
 MAP_PATH = "map_tickets.json"
 
 ANCHOR        = 918_431_345
-STEPS_BACK    = 3_000
-STEPS_FORWARD = 2_500   # larger forward window to catch new tickets each day
+STEPS_BACK    = 0
+STEPS_FORWARD = 2_500
 DELAY         = 0.2
 
 # Re-check NOT_FOUND tickets younger than this many days (city adds tickets with delay)
@@ -146,6 +146,7 @@ def init_db():
             amount          REAL,
             vehicle_make    TEXT,
             is_payable      INTEGER,
+            status          TEXT,
             scraped_at      TEXT
         )
     """)
@@ -157,6 +158,11 @@ def init_db():
         )
     """)
     conn.commit()
+    # Migrate: add status column if it doesn't exist yet
+    cols = [r[1] for r in conn.execute("PRAGMA table_info(tickets)").fetchall()]
+    if "status" not in cols:
+        conn.execute("ALTER TABLE tickets ADD COLUMN status TEXT")
+        conn.commit()
     return conn
 
 def load_known_numbers(conn):
@@ -167,6 +173,43 @@ def load_known_numbers(conn):
     c.execute("SELECT ticket_number FROM tickets")
     known.update(row[0] for row in c.fetchall())
     return known
+
+def recheck_null_tickets(conn, session, token):
+    """Re-fetch any tickets in the DB that have null/empty location or offence_code."""
+    rows = conn.execute("""
+        SELECT ticket_number FROM tickets
+        WHERE (location IS NULL OR location = '')
+           OR (offence_code IS NULL OR offence_code = '')
+    """).fetchall()
+    if not rows:
+        return token
+    print(f"\n  Re-checking {len(rows)} tickets with missing fields...")
+    for (num,) in rows:
+        status, ticket = fetch_ticket(session, int(num), token)
+        if status == "HIT" and ticket:
+            conn.execute("""
+                UPDATE tickets SET
+                    datetime_issued = COALESCE(NULLIF(?, ''), datetime_issued),
+                    location        = COALESCE(NULLIF(?, ''), location),
+                    offence_code    = COALESCE(NULLIF(?, ''), offence_code),
+                    amount          = CASE WHEN ? > 0 THEN ? ELSE amount END,
+                    vehicle_make    = COALESCE(NULLIF(?, ''), vehicle_make),
+                    status          = COALESCE(NULLIF(?, ''), status)
+                WHERE ticket_number = ?
+            """, (
+                ticket["datetime"], ticket["location"], ticket["offence_code"],
+                ticket["amount"], ticket["amount"], ticket["vehicle_make"],
+                ticket.get("status", ""), num
+            ))
+            conn.commit()
+            print(f"    Updated {num} -> {ticket['location'] or '(still empty)'}")
+        elif status == "AUTH_EXPIRED":
+            new_token = fetch_token(headless=HEADLESS)
+            if new_token:
+                token = new_token
+        time.sleep(DELAY)
+    print()
+    return token
 
 def purge_recent_not_found(conn, days=RECHECK_DAYS):
     """Remove NOT_FOUND entries scanned within the last N days so they get rechecked.
@@ -202,6 +245,7 @@ def upload_to_supabase(tickets):
             "amount":          t["amount"],
             "vehicle_make":    t["vehicle_make"] or None,
             "is_payable":      bool(t.get("is_payable")),
+            "status":          t.get("status") or None,
             "scraped_at":      datetime.now().isoformat(),
         }
         for t in tickets
@@ -284,8 +328,8 @@ def save_ticket(conn, ticket, known_set):
     try:
         conn.execute("""
             INSERT OR IGNORE INTO tickets
-            (ticket_number, datetime_issued, location, offence_code, amount, vehicle_make, is_payable, scraped_at)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            (ticket_number, datetime_issued, location, offence_code, amount, vehicle_make, is_payable, status, scraped_at)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             ticket["number"],
             ticket["datetime"],
@@ -294,6 +338,7 @@ def save_ticket(conn, ticket, known_set):
             ticket["amount"],
             ticket["vehicle_make"],
             1 if ticket.get("is_payable") else 0,
+            ticket.get("status") or "",
             datetime.now().isoformat()
         ))
         conn.commit()
@@ -494,7 +539,7 @@ def geocode_address(address, cache, session):
 def export_map(conn):
     c = conn.cursor()
     c.execute("""
-        SELECT ticket_number, datetime_issued, location, offence_code, amount, vehicle_make
+        SELECT ticket_number, datetime_issued, location, offence_code, amount, vehicle_make, status
         FROM tickets ORDER BY datetime_issued DESC
     """)
     rows = c.fetchall()
@@ -506,13 +551,16 @@ def export_map(conn):
         if not loc:
             continue
         locs[loc]["count"] += 1
-        locs[loc]["tickets"].append({
+        t = {
             "number":   row[0],
             "datetime": row[1],
             "offence":  row[3],
             "amount":   row[4],
             "make":     row[5],
-        })
+        }
+        if row[6]:
+            t["status"] = row[6]
+        locs[loc]["tickets"].append(t)
 
     # Geocode all unique addresses (cached — only new/failed ones hit the API)
     cache   = _load_geo_cache()
@@ -587,6 +635,9 @@ def run_scanner():
         print("ERROR: Could not get token. Try running: python get_token.py --visible")
         return
     print(f"Token OK: {token[:40]}...\n")
+
+    # Re-fetch any tickets that came back with missing fields
+    token = recheck_null_tickets(conn, session, token)
 
     # Re-open recently-missed IDs so the city's delayed entries get picked up
     purge_recent_not_found(conn)
