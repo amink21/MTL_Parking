@@ -233,7 +233,7 @@ def upload_to_supabase(tickets):
         "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type":  "application/json",
-        "Prefer":        "resolution=merge-duplicates",
+        "Prefer":        "return=minimal",
     }
     url     = f"{SUPABASE_URL}/rest/v1/tickets"
     records = [
@@ -621,12 +621,20 @@ def export_map(conn):
 def run_scanner():
     print("Montreal Parking Ticket Scanner v2")
     print("="*60)
-    print(f"Anchor  : {ANCHOR:,}")
-    print(f"Window  : {STEPS_BACK:,} back, {STEPS_FORWARD:,} forward")
-    print(f"DB      : {DB_PATH}\n")
 
     conn    = init_db()
     session = requests.Session()
+
+    # Use the highest ticket number in the DB as the anchor so every run
+    # picks up from where the last one left off, rather than a stale constant.
+    max_num = conn.execute(
+        "SELECT MAX(CAST(ticket_number AS INTEGER)) FROM tickets"
+    ).fetchone()[0]
+    anchor = max_num if max_num else ANCHOR
+
+    print(f"Anchor  : {anchor:,} (max in DB)" if max_num else f"Anchor  : {anchor:,} (default)")
+    print(f"Window  : {STEPS_BACK:,} back, {STEPS_FORWARD:,} forward")
+    print(f"DB      : {DB_PATH}\n")
 
     # Get token via Selenium
     print("Getting auth token via Selenium...")
@@ -645,7 +653,7 @@ def run_scanner():
     # Generate window — skip anything already in scanned or tickets tables
     print("Generating scan window...")
     known   = load_known_numbers(conn)
-    window  = generate_window(ANCHOR, STEPS_BACK, STEPS_FORWARD)
+    window  = generate_window(anchor, STEPS_BACK, STEPS_FORWARD)
     to_scan = [n for n in window if str(n) not in known]
     print(f"  Valid numbers : {len(window):,}")
     print(f"  Already known : {len(window) - len(to_scan):,}")
