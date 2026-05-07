@@ -862,8 +862,8 @@ function populateCodes() {
 // ── Events ───────────────────────────────────────
 document.getElementById('apply-filter').addEventListener('click',()=>{const f=getFiltered();renderMap(f);updateStats(f);});
 document.getElementById('reset-filter').addEventListener('click',()=>{
-  document.getElementById('f-date-from').value='';
-  document.getElementById('f-date-to').value='2026-04-21';
+  document.getElementById('f-date-from').value='2026-04-21';
+  document.getElementById('f-date-to').value=new Date().toISOString().slice(0,10);
   document.getElementById('f-offence').value='';
   document.querySelectorAll('.qf-btn').forEach(b=>b.classList.remove('active'));
   const f=getFiltered();renderMap(f);updateStats(f);
@@ -912,9 +912,9 @@ async function boot() {
 
   geocoded=(data.locations||[]).filter(l=>l.lat&&l.lng).map(l=>({...l,totalAmt:l.tickets.reduce((s,t)=>s+t.amount,0)}));
   populateCodes();
-  // Default to all data up to the last known date (Apr 21 2026 — Montreal API change)
-  document.getElementById('f-date-from').value = '';
-  document.getElementById('f-date-to').value   = '2026-04-21';
+  // Default from last known date forward
+  document.getElementById('f-date-from').value = '2026-04-21';
+  document.getElementById('f-date-to').value   = new Date().toISOString().slice(0,10);
   const filtered=getFiltered(); renderMap(filtered); updateStats(filtered, data.total_db);
 
   if(geocoded.length>1){
