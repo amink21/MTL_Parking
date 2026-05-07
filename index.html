@@ -862,7 +862,8 @@ function populateCodes() {
 // ── Events ───────────────────────────────────────
 document.getElementById('apply-filter').addEventListener('click',()=>{const f=getFiltered();renderMap(f);updateStats(f);});
 document.getElementById('reset-filter').addEventListener('click',()=>{
-  ['f-date-from','f-date-to'].forEach(id=>document.getElementById(id).value='');
+  document.getElementById('f-date-from').value='';
+  document.getElementById('f-date-to').value='2026-04-21';
   document.getElementById('f-offence').value='';
   document.querySelectorAll('.qf-btn').forEach(b=>b.classList.remove('active'));
   const f=getFiltered();renderMap(f);updateStats(f);
@@ -911,10 +912,9 @@ async function boot() {
 
   geocoded=(data.locations||[]).filter(l=>l.lat&&l.lng).map(l=>({...l,totalAmt:l.tickets.reduce((s,t)=>s+t.amount,0)}));
   populateCodes();
-  // Default to last 7 days on load
-  const _to = new Date(); const _from = new Date(_to); _from.setDate(_from.getDate()-7);
-  document.getElementById('f-date-from').value = _from.toISOString().slice(0,10);
-  document.getElementById('f-date-to').value   = _to.toISOString().slice(0,10);
+  // Default to all data up to the last known date (Apr 21 2026 — Montreal API change)
+  document.getElementById('f-date-from').value = '';
+  document.getElementById('f-date-to').value   = '2026-04-21';
   const filtered=getFiltered(); renderMap(filtered); updateStats(filtered, data.total_db);
 
   if(geocoded.length>1){
