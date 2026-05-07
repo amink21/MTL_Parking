@@ -233,9 +233,9 @@ def upload_to_supabase(tickets):
         "apikey":        SUPABASE_KEY,
         "Authorization": f"Bearer {SUPABASE_KEY}",
         "Content-Type":  "application/json",
-        "Prefer":        "return=minimal",
+        "Prefer":        "return=minimal,resolution=merge-duplicates",
     }
-    url     = f"{SUPABASE_URL}/rest/v1/tickets"
+    url     = f"{SUPABASE_URL}/rest/v1/tickets?on_conflict=ticket_number"
     records = [
         {
             "ticket_number":   t["number"],

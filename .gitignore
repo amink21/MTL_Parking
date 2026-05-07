@@ -38,3 +38,7 @@ desktop.ini
 # Logs
 *.log
 logs/
+
+# Debug / local tooling output (may contain tokens or large geocache data)
+_endpoint_log.json
+geo_cache.json
